@@ -26,7 +26,7 @@ def run_backtest(tickers, data_dir="data/tickers", latest_only=False):
             df = pd.read_csv(f"{data_dir}/{ticker}_12mo.csv", parse_dates=["Date"], index_col="Date")
 
             for strategy_name, strategy_func in STRATEGIES.items():
-                # print(f"📈 Backtesting {strategy_name} on {ticker}...")
+                print(f"📈 Backtesting {strategy_name} on {ticker}...")
 
                 # Support flexible latest_only param
                 strategy_args = {
@@ -40,9 +40,8 @@ def run_backtest(tickers, data_dir="data/tickers", latest_only=False):
                 for signal in signals:
                     # Simulate random outcome (real logic would check historical result)
                     simulated = simulate_trade_result(signal)
-                    print(f"📈 Simulated {simulated}")
                     if simulated:
-                        all_trades.append(signal)
+                        all_trades.append(simulated)
 
         except Exception as e:
             print(f"⚠️ Error in {ticker}: {e}")
