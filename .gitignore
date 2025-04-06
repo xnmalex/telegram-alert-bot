@@ -4,3 +4,12 @@ deploy.bat
 scheduler.bat
 
 venv/
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+
+# Byte-compiled / optimized / DLL files
+*.pyc
+*.pyo
+*.pyd
