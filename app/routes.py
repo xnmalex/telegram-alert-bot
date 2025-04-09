@@ -1,6 +1,7 @@
 from flask import Blueprint, request
 from .bot import handle_command, analyze_new_highs,find_golden_cross_tickers, find_death_cross_tickers,scan_divergence_bulk, handle_ma_health,ma_health_alert
 from .utils import send_telegram_alert
+from .signals.update_tickers import download_and_save_tickers
 import logging
 
 webhook = Blueprint('webhook', __name__)
@@ -44,3 +45,7 @@ def alert_ma_health():
     reply = ma_health_alert()
     send_telegram_alert(message=reply, chat_id=request.args.get("chat-id"))
     return {"status":"ok"},200
+
+@screener.route("/update-tickers", methods=["GET"])
+def update_ticker_scheduler():
+    return download_and_save_tickers()
