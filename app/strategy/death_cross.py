@@ -15,6 +15,7 @@ def detect_death_cross(df, ticker, latest_only=True, max_signal_age_days=7, rr_r
 
     last_date = df.index[-1]
     cutoff_date = last_date - timedelta(days=max_signal_age_days)
+    latest_price = df["Close"].iloc[-1] 
 
     for i in range(200, len(df)):
         signal_date = df.index[i]
@@ -32,7 +33,20 @@ def detect_death_cross(df, ticker, latest_only=True, max_signal_age_days=7, rr_r
                     continue
 
                 take_profit = entry_price - sl_value * rr_ratio
+                distance_from_signal = abs((latest_price - entry_price) / entry_price)
 
+                signals.append({
+                    "ticker": ticker,
+                    "signal_date": signal_date.strftime("%Y-%m-%d"),
+                    "entry_price": round(entry_price, 2),
+                    "stop_loss": round(stop_loss, 2),
+                    "take_profit": round(take_profit, 2),
+                    "rr_ratio": rr_ratio,
+                    "strategy": "death_cross",
+                    "event": "Death Cross occurred",
+                    "atr": round(atr, 2),
+                    "distance_from_signal": round(distance_from_signal * 100, 2)  # percentage
+                })
                 signals.append({
                     "ticker": ticker,
                     "signal_date": signal_date.strftime("%Y-%m-%d"),

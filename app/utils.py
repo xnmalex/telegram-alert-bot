@@ -17,3 +17,5 @@ def send_telegram_alert(message, chat_id=None):
         "parse_mode": "Markdown"
     }
     requests.post(url, data=payload)
+
+

@@ -1,31 +1,28 @@
-import json
 import os
+import json
+from datetime import datetime
 
-SIGNAL_LOG_PATH = "logs/trade_signals.json"
+def save_signals_to_log(signals, strategy, log_dir="logs"):
+    from datetime import datetime
+    import os, json
 
-def log_trade_signal(signal):
-    """
-    Append new signal to log file. Handles corrupted or empty file.
-    """
-    if not signal:
-        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    folder = os.path.join(log_dir, strategy)
+    os.makedirs(folder, exist_ok=True)
 
-    # Create logs folder if not exists
-    os.makedirs(os.path.dirname(SIGNAL_LOG_PATH), exist_ok=True)
+    path = os.path.join(folder, f"{today}.json")
 
-    existing = []
+    # Load existing data
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            existing = json.load(f)
+    else:
+        existing = []
 
-    if os.path.exists(SIGNAL_LOG_PATH):
-        try:
-            with open(SIGNAL_LOG_PATH, "r") as f:
-                content = f.read().strip()
-                if content:
-                    existing = json.loads(content)
-        except Exception as e:
-            print(f"⚠️ Could not load existing signals, resetting file: {e}")
-            existing = []
+    existing.extend(signals)
 
-    existing.append(signal)
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2, default=str)
 
-    with open(SIGNAL_LOG_PATH, "w") as f:
-        json.dump(existing, f, indent=2)
+
+    # print(f"✅ Logged {len(signals)} signals to {file_path}")
