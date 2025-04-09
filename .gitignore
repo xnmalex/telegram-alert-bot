@@ -13,3 +13,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# ignore local data and logs folder
+logs/
+data/

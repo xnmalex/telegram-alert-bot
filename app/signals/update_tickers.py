@@ -11,7 +11,7 @@ def download_and_save_tickers(period="12mo", interval="1d"):
     for ticker in ticker_list:
         try:
             print(f"📥 Downloading {ticker}...")
-            df = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
+            df = yf.download(ticker, period=period, group_by="ticker", auto_adjust=False)
             if df.empty:
                 print(f"No data for {ticker}")
                 continue

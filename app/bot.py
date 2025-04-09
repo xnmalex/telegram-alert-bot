@@ -172,7 +172,6 @@ def get_new_highs():
     return "\n".join(messages)
 
 def load_or_download_history(ticker, period="6mo", force_refresh=False):
-    import os
     path = f"data/{ticker}_history_cleaned.csv"
 
     if os.path.exists(path) and not force_refresh:
@@ -492,17 +491,18 @@ def ma_health_stats(tickers):
     count_both = 0
     total = 0
 
-
     for ticker in tickers:
         try:
-            df = load_cached_ticker(ticker, period="12mo")
+            path = f"data/tickers/{ticker}_12mo.csv"
+            df = pd.read_csv(path, skiprows=2, names=["Date", "Close", "High", "Low", "Open", "Volume"], parse_dates=["Date"])
+            df.dropna(subset=["Close", "High", "Low"], inplace=True)
+            
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             df["SMA200"] = df["Close"].rolling(window=200).mean()
-
-            if len(df) == 0:
-                continue
-
+            
+           
             latest = df.iloc[-1]
+           
             above_50 = latest["Close"] > latest["SMA50"]
             above_200 = latest["Close"] > latest["SMA200"]
 
@@ -515,7 +515,7 @@ def ma_health_stats(tickers):
 
             total += 1
         except Exception as e:
-            print(f"Error processing {ticker}: {e}")
+            print(f"Error processing {ticker}: {e} ")
             continue
 
     if total == 0:
