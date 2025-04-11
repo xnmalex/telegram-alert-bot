@@ -6,8 +6,14 @@ import json
 import pandas as pd
 from bs4 import BeautifulSoup
 import requests
-from datetime import datetime
-from app.utils import load_tickers_from_json, read_tickers_df
+from scipy.signal import argrelextrema
+from scipy.stats import linregress 
+import numpy as np
+import traceback
+from app.utils.telegram_utils import format_market_breadth_telegram_message
+from app.utils.tickers_utils import load_tickers_from_json, read_tickers_df
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
 
 # Load environment variables from .env
 load_dotenv()
@@ -20,6 +26,11 @@ WATCHLIST = ['SPY', 'QQQ']
 DATA_DIR = "data"
 CACHE_FILE = os.path.join(DATA_DIR, "large_cap_tickers.json")
 CSV_PATH = os.path.join(DATA_DIR, "sp500_companies.csv")
+
+def get_rsi(df): return RSIIndicator(close=df["Close"], window=14).rsi()
+def get_macd(df):
+    macd = MACD(close=df["Close"], window_slow=26, window_fast=12, window_sign=9) 
+    return macd.macd()    
 
 # Analyze a stock's technical indicators
 def analyze_stock(ticker):
@@ -34,13 +45,7 @@ def analyze_stock(ticker):
     df["50MA"] = df["Close"].rolling(window=50).mean()
     df["200MA"] = df["Close"].rolling(window=200).mean()
 
-    delta = df["Close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-    rs = avg_gain / avg_loss
-    df["RSI"] = 100 - (100 / (1 + rs))
+    df["RSI"] = get_rsi(df)
 
     golden_cross = (
         df["50MA"].iloc[-1] > df["200MA"].iloc[-1] and
@@ -72,13 +77,7 @@ def generate_summary_message(ticker):
         df["50MA"] = df["Close"].rolling(window=50).mean()
         df["200MA"] = df["Close"].rolling(window=200).mean()
 
-        delta = df["Close"].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        df["RSI"] = 100 - (100 / (1 + rs))
+        df["RSI"] = get_rsi(df)
 
         current_price = df["Close"].iloc[-1]
         rsi = df["RSI"].iloc[-1]
@@ -172,7 +171,6 @@ def get_new_highs():
 
     return "\n".join(messages)
 
-
 def download_and_cache_bulk(tickers, period="6mo", force_refresh=False):
     import os
     os.makedirs("data/tickers", exist_ok=True)
@@ -198,8 +196,6 @@ def download_and_cache_bulk(tickers, period="6mo", force_refresh=False):
                 print(f"⚠️ Failed to save {t}: {e}")
     else:
         print("Using cached data for all tickers.")
-    
-
 
 def find_golden_cross_tickers(ticker_list=None):
     if ticker_list is None:
@@ -219,22 +215,35 @@ def find_golden_cross_tickers(ticker_list=None):
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             #df["SMA200"] = df["Close"].rolling(window=200).mean()
             
-            sma_slope = df["SMA20"].iloc[-2] - df["SMA20"].iloc[-6]
-            latest = df.iloc[-2]
+            sma_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
+            latest = df.iloc[-1]
             
             if sma_slope <= 0:
                 continue  # skip if not sloping up
            
-            #20-day MA crossed above 50-day MA (Death Cross)
-            if latest["SMA20"] > latest["SMA50"] and latest["Close"] > latest["SMA20"]:
+            # Find crossover (SMA20 > SMA50) within last 3 bars
+            signal_found = False
+            for i in range(-3, 0):
+                if df["SMA20"].iloc[i - 1] < df["SMA50"].iloc[i - 1] and df["SMA20"].iloc[i] > df["SMA50"].iloc[i]:
+                    signal_found = True
+                    signal_date = df["Date"].iloc[i]
+                    break
+
+            if not signal_found:
+                continue
+
+            latest = df.iloc[-1]
+            
+            if latest["Close"] > latest["SMA20"]:
                 goldencross.append({
                     "ticker": ticker,
                     "price": float(round(latest['Close'], 2)),
                     "sma20": float(round(latest['SMA20'], 2)),
                     "sma50": float(round(latest['SMA50'], 2)),
-                    "signal": "golden_cross"
+                    "signal": "golden_cross",
+                    "signal_date": signal_date
                 })
-           
+            
         except Exception as e:
             print(f"Error with {ticker}: {e}")
             continue
@@ -251,7 +260,7 @@ def find_death_cross_tickers(ticker_list=None):
 
     for ticker in ticker_list:
         try:
-            df = read_tickers_df(ticker, period="6mo")
+            df = read_tickers_df(ticker)
            
             if df.empty or len(df) < 120:
                 continue
@@ -260,44 +269,40 @@ def find_death_cross_tickers(ticker_list=None):
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             #df["SMA200"] = df["Close"].rolling(window=200).mean()
             
-            sma_slope = df["SMA20"].iloc[-2] - df["SMA20"].iloc[-6]
+            sma_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
             if sma_slope >= 0:
                 continue  # skip if not sloping up
 
-            latest = df.iloc[-2]
+            latest = df.iloc[-1]
             
-            #50-day MA crossed below 200-day MA (Death Cross)
-            if latest["SMA20"] < latest["SMA50"] and latest["Close"] < latest["SMA20"]:
+             # Find crossover (SMA20 > SMA50) within last 3 bars
+            signal_found = False
+            for i in range(-3, 0):
+                if df["SMA20"].iloc[i - 1] > df["SMA50"].iloc[i - 1] and df["SMA20"].iloc[i] < df["SMA50"].iloc[i]:
+                    signal_found = True
+                    signal_date = df["Date"].iloc[i]
+                    break
+
+            if not signal_found:
+                continue
+
+            latest = df.iloc[-1]
+            
+            if latest["Close"] > latest["SMA20"]:
                 death_cross.append({
                     "ticker": ticker,
                     "price": float(round(latest['Close'], 2)),
                     "sma20": float(round(latest['SMA20'], 2)),
                     "sma50": float(round(latest['SMA50'], 2)),
-                    "signal": "death cross"
+                    "signal": "death_cross",
+                    "signal_date": signal_date
                 })
-           
         except Exception as e:
             print(f"Error with {ticker}: {e}")
             continue
 
     death_cross = sorted(death_cross, key=lambda x: x["price"], reverse=True)
     return death_cross[:50]
-
-def fix_csv_format(broken_csv_path, cleaned_csv_path):
-    # Skip the first 2 rows and manually define proper column names
-    df = pd.read_csv(
-        broken_csv_path,
-        skiprows=2,
-        names=["Date", "Close", "High", "Low", "Open", "Volume"],
-        parse_dates=["Date"]
-    )
-
-    df.set_index("Date", inplace=True)
-    df = df.sort_index()
-
-    # Save back to CSV in yfinance-compatible format
-    df.to_csv(cleaned_csv_path)
-    print(f"✅ Fixed and saved: {cleaned_csv_path}")
     
 def format_tickers_as_text(results, fields, include_header=True, dollar_fields=None):
     """
@@ -332,7 +337,6 @@ def format_tickers_as_text(results, fields, include_header=True, dollar_fields=N
 
     return "\n".join(lines)
 
-
 def findTopMarketCap():
     query = EquityQuery('and', [
         EquityQuery('eq', ['region', 'my']),  # Region code for Malaysia
@@ -352,80 +356,83 @@ def findTopMarketCap():
     else:
         print("No stocks found matching the criteria.")
     
-import yfinance as yf
-import pandas as pd
-import numpy as np
-
 def detect_divergence(tickers, indicator="macd", lookback=30, signal_filter=None):
-    print(f"detect: {tickers}")
     results = []
-    download_and_cache_bulk(tickers, period="6mo")
 
     for ticker in tickers:
         try:
-            df = read_tickers_df(ticker, period="6mo")
-            df = df[["Close"]].dropna()
+            df = read_tickers_df(ticker)
+            df = df.dropna()
 
             if df.empty or len(df) < lookback:
                 continue
 
             # Add indicator values
             if indicator == "macd":
-                df["EMA12"] = df["Close"].ewm(span=12).mean()
-                df["EMA26"] = df["Close"].ewm(span=26).mean()
-                df["MACD"] = df["EMA12"] - df["EMA26"]
+                df["MACD"] = get_macd(df)
+                
                 signal_column = "MACD"
 
             elif indicator == "rsi":
-                delta = df["Close"].diff()
-                gain = delta.clip(lower=0)
-                loss = -delta.clip(upper=0)
-                avg_gain = gain.rolling(window=14).mean()
-                avg_loss = loss.rolling(window=14).mean()
-                rs = avg_gain / avg_loss
-                df["RSI"] = 100 - (100 / (1 + rs))
+                df["RSI"] = get_rsi(df)
                 signal_column = "RSI"
 
             df = df.dropna().iloc[-lookback:]
-
+            
             # Detect divergence
             recent = df.iloc[-1]
-            lowest_close_idx = df["Close"].idxmin()
-            highest_close_idx = df["Close"].idxmax()
-
+        
             result = {
                 "ticker": ticker,
                 "indicator": indicator,
                 "price_now": float(round(recent["Close"], 2)),
                 "signal": None
             }
+            
+            # Find indices of swing lows
+            swing_low_idx = argrelextrema(df[signal_column].values, np.less_equal, order=3)[0]
 
-            if indicator == "macd":
-                lowest_macd_idx = df[signal_column].idxmin()
-                macd_then = df.loc[lowest_macd_idx]["MACD"]
-                price_then = df.loc[lowest_macd_idx]["Close"]
+            # Initialize column with NaN
+            df["macd_swing_low"] = np.nan
+
+            # Assign swing lows only at the detected positions
+            df.iloc[swing_low_idx, df.columns.get_loc("macd_swing_low")] = df.iloc[swing_low_idx][signal_column].values
+            # df["macd_swing_high"] = df[signal_column][argrelextrema(df[signal_column].values, np.greater_equal, order=3)[0]]
+           
+            if indicator == "macd" and len(swing_low_idx) >= 2:
+               
+                lowest_macd_idx = swing_low_idx[-2]
+                        
+                macd_then = df.iloc[lowest_macd_idx]["MACD"]
+                price_then = df.iloc[lowest_macd_idx]["Close"]
                 macd_now = recent["MACD"]
                 price_now = recent["Close"]
+                           
                 
                 macd_slope_pct = ((macd_now - macd_then) / abs(macd_then)) * 100 if macd_then != 0 else 0
                 price_change_pct = ((price_now - price_then) / price_then) * 100
+                
+                macd_then_date = df.iloc[lowest_macd_idx]["Date"]
 
                 result["macd_slope_pct"] = round(macd_slope_pct, 2)
                 result["price_change_pct"] = round(price_change_pct, 2)
                 result["macd_now"] = round(macd_now, 4)
                 result["macd_then"] = round(macd_then, 4)
                 result["price_then"] = round(price_then, 2)
-                result["date"] = lowest_macd_idx.strftime("%Y-%m-%d")
+                result["macd_then_date"] = macd_then_date
                 
-                if macd_slope_pct > 200:
+                divergence_strength = abs(macd_slope_pct) * abs(price_change_pct)
+                
+                if divergence_strength > 1000:
                     result["strength"] = "strong"
-                elif macd_slope_pct > 100:
+                elif divergence_strength > 500:
                     result["strength"] = "moderate"
-                elif macd_slope_pct > 50:
+                elif divergence_strength > 200:
                     result["strength"] = "weak"
                 else:
                     result["strength"] = "noise"
                 
+                result["divergence_score"] = round(divergence_strength, 2)
                 # Apply proper divergence condition
                 if price_now < price_then and macd_now > macd_then:
                     result["signal"] = "bullish_divergence"
@@ -433,37 +440,138 @@ def detect_divergence(tickers, indicator="macd", lookback=30, signal_filter=None
                     result["signal"] = "bearish_divergence"
                     
             elif indicator == "rsi":
-                lowest_rsi_idx = df[signal_column].idxmin()
-                if df.loc[lowest_close_idx]["Close"] < recent["Close"] and df.loc[lowest_rsi_idx][signal_column] < recent[signal_column]:
-                    result["signal"] = "bullish_divergence"
-                elif df.loc[highest_close_idx]["Close"] > recent["Close"] and df.loc[highest_close_idx][signal_column] > recent[signal_column]:
-                    result["signal"] = "bearish_divergence"
+                lowest_macd_idx = swing_low_idx[-2]
+                # if df.loc[lowest_close_idx]["Close"] < recent["Close"] and df.loc[lowest_rsi_idx][signal_column] < recent[signal_column]:
+                #     result["signal"] = "bullish_divergence"
+                # elif df.loc[highest_close_idx]["Close"] > recent["Close"] and df.loc[highest_close_idx][signal_column] > recent[signal_column]:
+                #     result["signal"] = "bearish_divergence"
 
-            if result["signal"]:
-                if signal_filter is None or result["signal"] == signal_filter and result.get("strength") == "strong":
+            
+            if result["signal"] and result["signal"] == signal_filter:
+                # print(f"📊 Signal: {result['signal']} | MACD slope: {macd_slope_pct:.2f}% | Strength: {result.get('strength')}")
+                if result.get("strength") == "strong" or result.get("strength") == "moderate":
                     results.append(result)
 
         except Exception as e:
             print(f"{ticker} error: {e}")
+            traceback.print_exc()
             continue
 
-    results.sort(key=lambda x: x["price_now"], reverse=True)
+    if results:
+        results.sort(key=lambda x: x["divergence_score"], reverse=True)
+    return results[:50]
+
+def detect_combined_divergence(df, lookback=60, trend_bars=20):
+    df = df[-lookback:].copy()
+
+    # === MACD Calculation ===
+    df["MACD"] = get_macd(df)
+
+    # === RSI Calculation ===
+    df["RSI"] = get_rsi(df)
+
+    if len(df) < trend_bars + 2:
+        return []
+
+    macd_now = df.iloc[-1]["MACD"]
+    rsi_now = df.iloc[-1]["RSI"]
+    price_now = df.iloc[-1]["Close"]
+
+    macd_trend = "up" if linregress(np.arange(trend_bars), df["MACD"].iloc[-trend_bars:]).slope > 0 else "down"
+    rsi_trend = "up" if linregress(np.arange(trend_bars), df["RSI"].iloc[-trend_bars:]).slope > 0 else "down"
+    signals = []
+
+    # Detect Bullish Divergence
+    if macd_trend == "up":
+        macd_then_idx = df[-trend_bars:]["MACD"].idxmin()
+        macd_then = df.loc[macd_then_idx]["MACD"]
+        price_then = df.loc[macd_then_idx]["Close"]
+        macd_date = df.loc[macd_then_idx]["Date"]
+        if price_now < price_then and macd_now > macd_then:
+            macd_score = abs(((macd_now - macd_then) / abs(macd_then)) * 100) * abs((price_now - price_then) / price_then) * 100
+            signals.append(("MACD", "bullish_divergence", macd_score, macd_then_idx))
+
+    if rsi_trend == "up":
+        rsi_then_idx = df[-trend_bars:]["RSI"].idxmin()
+        rsi_then = df.loc[rsi_then_idx]["RSI"]
+        price_then = df.loc[rsi_then_idx]["Close"]
+        rsi_date = df.loc[rsi_then_idx]["Date"]
+        if price_now < price_then and rsi_now > rsi_then:
+            rsi_score = abs(((rsi_now - rsi_then) / abs(rsi_then)) * 100) * abs((price_now - price_then) / price_then) * 100
+            signals.append(("RSI", "bullish_divergence", rsi_score, rsi_then_idx))
+
+    # Detect Bearish Divergence
+    if macd_trend == "down":
+        macd_then_idx = df[-trend_bars:]["MACD"].idxmax()
+        macd_then = df.loc[macd_then_idx]["MACD"]
+        price_then = df.loc[macd_then_idx]["Close"]
+        macd_date = macd_then_idx
+        if price_now > price_then and macd_now < macd_then:
+            macd_score = abs(((macd_then - macd_now) / abs(macd_then)) * 100) * abs((price_now - price_then) / price_then) * 100
+            signals.append(("MACD", "bearish_divergence", macd_score, macd_then_idx))
+
+    if rsi_trend == "down":
+        rsi_then_idx = df[-trend_bars:]["RSI"].idxmax()
+        rsi_then = df.loc[rsi_then_idx]["RSI"]
+        price_then = df.loc[rsi_then_idx]["Close"]
+        rsi_date = df.loc[rsi_then_idx]["Date"]
+        if price_now > price_then and rsi_now < rsi_then:
+            rsi_score = abs(((rsi_then - rsi_now) / abs(rsi_then)) * 100) * abs((price_now - price_then) / price_then) * 100
+            signals.append(("RSI", "bearish_divergence", rsi_score, rsi_then_idx))
+            
+    macd_slope_pct = ((macd_now - macd_then) / abs(macd_then)) * 100 if macd_then != 0 else 0
+    price_change_pct = ((price_now - price_then) / price_then) * 100
+    rsi_slope_pct = ((rsi_now - rsi_then) / rsi_then) * 100
+    
+    # Combine scores
+    results = []
+    for divergence_type in ["bullish_divergence", "bearish_divergence"]:
+        related = [s for s in signals if s[1] == divergence_type]
+        if related:
+            base = len(related)
+            bonus = 2 if base == 2 else 0
+            magnitude = abs(macd_slope_pct) * abs(price_change_pct) * abs(rsi_slope_pct) / 100
+            total_score = base + bonus + (magnitude * 0.1)
+            
+            if total_score > 10 and total_score > 6 and bonus > 0:
+                results.append({
+                    "signal": divergence_type,
+                    "confirmed": bonus > 0,
+                    "base_score": base,
+                    "bonus_score": bonus,
+                    "magnitude_score": round(magnitude, 2),
+                    "composite_score": round(total_score, 2),
+                    "strength": "strong" if total_score > 10 else "moderate" if total_score > 6 else "weak",
+                    "price_now": round(price_now, 2),
+                    "macd_then": round(macd_then, 4) if macd_then is not None else None,
+                    "macd_now": round(macd_now, 4),
+                    "rsi_then": round(rsi_then, 2) if rsi_then is not None else None,
+                    "rsi_now": round(rsi_now, 2),
+                    "macd_date" :macd_date,
+                    "rsi_date" :rsi_date
+                })
+
     return results
+
 
 def scan_divergence_bulk(indicator="macd", lookback=30, signal_filter=None):
     with open("data/large_cap_tickers.json") as f:
         tickers = json.load(f)
-    
-    print(f"scan divergence: {tickers}")
-      
+     
+    results = [] 
     try:
-        result = detect_divergence(tickers, indicator=indicator, lookback=lookback, signal_filter=signal_filter)
-        if result:
-               return result
+        for ticker in tickers:
+            df = read_tickers_df(ticker)
+            signals = detect_combined_divergence(df)
+            for signal in signals:
+                signal["ticker"] = ticker
+                results.append(signal)
+                
     except Exception as e:
             print(f"error: {e}")
+    results.sort(key=lambda x: x["composite_score"], reverse=True)
+    return results
            
-
 def ma_health_stats(tickers):
     
     count_50 = 0
@@ -533,48 +641,3 @@ def ma_health_alert():
         
     return format_market_breadth_telegram_message(stats)
     
-def get_strength_emoji(value, ma_type="default"):
-    """
-    Returns strength label based on MA type:
-    - For 50MA and 'both': <40 Weak, 40–60 Moderate, >60 Strong
-    - For 200MA: <50 Weak, 50–70 Moderate, >70 Strong
-    """
-    if ma_type == "200ma":
-        if value < 50:
-            return "🟥 Weak"
-        elif value < 70:
-            return "🟧 Moderate"
-        else:
-            return "🟩 Strong"
-    else:
-        if value < 40:
-            return "🟥 Weak"
-        elif value < 60:
-            return "🟧 Moderate"
-        else:
-            return "🟩 Strong"
-  
-def format_market_breadth_telegram_message(stats):
-    """
-    Formats the market breadth message for Telegram.
-    Uses custom thresholds per MA type, but shows a clean, unified legend.
-    
-    stats: dict with 'above_50ma', 'above_200ma', 'above_both', 'date' (optional)
-    """
-    
-    # Get today's date in YYYY-MM-DD format
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    
-    msg = []
-    msg.append(f"📊 Market Breadth Overview (as of {today_str})\n")
-
-    msg.append(f"% Above 50MA   : {stats['above_50ma']}%  → {get_strength_emoji(stats['above_50ma'], '50ma')}")
-    msg.append(f"% Above 200MA  : {stats['above_200ma']}%  → {get_strength_emoji(stats['above_200ma'], '200ma')}")
-    msg.append(f"% Above Both   : {stats['above_both']}%  → {get_strength_emoji(stats['above_both'], 'both')}")
-
-    msg.append("\n📘 Legend:")
-    msg.append("🟩 Strong")
-    msg.append("🟧 Moderate")
-    msg.append("🟥 Weak")
-
-    return "\n".join(msg)

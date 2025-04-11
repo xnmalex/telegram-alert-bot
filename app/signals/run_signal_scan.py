@@ -7,7 +7,7 @@ from app.strategy.death_cross_fast import detect_death_cross as detect_death_cro
 from app.strategy.consolidation import detect_consolidation_and_breakout
 from app.strategy.short_breakdown import detect_short_breakdown_signal
 from app.signals.log_signal import save_signals_to_log
-from app.utils import send_telegram_alert
+from app.utils.telegram_utils import send_telegram_alert
 import traceback
 import time
 
