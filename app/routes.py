@@ -1,5 +1,5 @@
 from flask import Blueprint, request
-from .bot import handle_command, analyze_new_highs,find_golden_cross_tickers, find_death_cross_tickers,scan_divergence_bulk, handle_ma_health,ma_health_alert
+from .bot import handle_command, analyze_new_highs,find_golden_cross_tickers, find_death_cross_tickers,scan_divergence_bulk,ma_health_alert
 from .utils import send_telegram_alert
 from .signals.update_tickers import download_and_save_tickers
 import logging
@@ -38,7 +38,7 @@ def divergence_scan():
     
 @screener.route("/ma-health", methods=["GET"])
 def ma_health():
-    return handle_ma_health()
+    return ma_health_alert()
 
 @screener.route("/ma-health-alert", methods=["GET"])
 def alert_ma_health():

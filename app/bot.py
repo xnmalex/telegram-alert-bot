@@ -7,6 +7,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
+from app.utils import load_tickers_from_json, read_tickers_df
 
 # Load environment variables from .env
 load_dotenv()
@@ -171,22 +172,6 @@ def get_new_highs():
 
     return "\n".join(messages)
 
-def load_or_download_history(ticker, period="6mo", force_refresh=False):
-    path = f"data/{ticker}_history_cleaned.csv"
-
-    if os.path.exists(path) and not force_refresh:
-        df = pd.read_csv(
-                path,
-                index_col=0,
-                parse_dates=True,
-                date_format="%Y-%m-%d"
-            )
-        return df
-       
-    df = yf.download(ticker, period=period)
-    if not df.empty:
-        df.to_csv(path)
-    return df
 
 def download_and_cache_bulk(tickers, period="6mo", force_refresh=False):
     import os
@@ -213,12 +198,7 @@ def download_and_cache_bulk(tickers, period="6mo", force_refresh=False):
                 print(f"⚠️ Failed to save {t}: {e}")
     else:
         print("Using cached data for all tickers.")
-        
-def load_cached_ticker(ticker, period="6mo"):
-    path = f"data/tickers/{ticker}_{period}.csv"
-    if not os.path.exists(path):
-        raise FileNotFoundError(f" Cached data not found for {ticker}")
-    return pd.read_csv(path, index_col=0, parse_dates=True, date_format="%Y-%m-%d")
+    
 
 
 def find_golden_cross_tickers(ticker_list=None):
@@ -230,7 +210,7 @@ def find_golden_cross_tickers(ticker_list=None):
 
     for ticker in ticker_list:
         try:
-            df = load_or_download_history(ticker, period="6mo")
+            df = read_tickers_df(ticker)
            
             if df.empty or len(df) < 120:
                 continue
@@ -271,7 +251,7 @@ def find_death_cross_tickers(ticker_list=None):
 
     for ticker in ticker_list:
         try:
-            df = load_or_download_history(ticker, period="6mo")
+            df = read_tickers_df(ticker, period="6mo")
            
             if df.empty or len(df) < 120:
                 continue
@@ -383,7 +363,7 @@ def detect_divergence(tickers, indicator="macd", lookback=30, signal_filter=None
 
     for ticker in tickers:
         try:
-            df = load_cached_ticker(ticker, period="6mo")
+            df = read_tickers_df(ticker, period="6mo")
             df = df[["Close"]].dropna()
 
             if df.empty or len(df) < lookback:
@@ -485,7 +465,7 @@ def scan_divergence_bulk(indicator="macd", lookback=30, signal_filter=None):
            
 
 def ma_health_stats(tickers):
-    download_and_cache_bulk(tickers, period="12mo") 
+    
     count_50 = 0
     count_200 = 0
     count_both = 0
@@ -493,14 +473,10 @@ def ma_health_stats(tickers):
 
     for ticker in tickers:
         try:
-            path = f"data/tickers/{ticker}_12mo.csv"
-            df = pd.read_csv(path, skiprows=2, names=["Date", "Close", "High", "Low", "Open", "Volume"], parse_dates=["Date"])
-            df.dropna(subset=["Close", "High", "Low"], inplace=True)
-            
+            df = read_tickers_df(ticker)
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             df["SMA200"] = df["Close"].rolling(window=200).mean()
             
-           
             latest = df.iloc[-1]
            
             above_50 = latest["Close"] > latest["SMA50"]
@@ -548,17 +524,10 @@ def ma_health_stats(tickers):
         "total": total
     }
     
-def handle_ma_health():
-    with open("data/large_cap_tickers.json") as f:
-        tickers = json.load(f)
-
-    stats = ma_health_stats(tickers)
-
-    return stats
-    
 
 def ma_health_alert():
-    stats = handle_ma_health()
+    tickers = load_tickers_from_json()
+    stats = ma_health_stats(tickers)
     if stats["total"] == 0:
         return "Could not calculate MA health."
         
