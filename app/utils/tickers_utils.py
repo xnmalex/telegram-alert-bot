@@ -1,6 +1,7 @@
 import json
 import warnings
 import pandas as pd
+import logging
 warnings.filterwarnings("ignore")
 
 
@@ -37,4 +38,5 @@ def read_tickers_df(ticker, period="12mo"):
         df = pd.read_csv(path, skiprows=2, names=["Date","Open","High","Low","Close","Adj Close","Volume"], parse_dates=["Date"])
         return df
     except Exception as e:
-        raise Exception(f"Error: {e}")
+        logging.error(f"Error loading tickers from {path}: {e}")
+        return None

@@ -14,6 +14,7 @@ from app.utils.telegram_utils import format_market_breadth_telegram_message
 from app.utils.tickers_utils import load_tickers_from_json, read_tickers_df
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
+import logging
 
 # Load environment variables from .env
 load_dotenv()
@@ -100,19 +101,28 @@ def generate_summary_message(ticker):
 def handle_command(message_text):
     parts = message_text.strip().split()
     
-    print(len(parts))
-    if parts[0].lower() == '/summary' and len(parts) == 2:
-        ticker = parts[1].upper()
-        return generate_summary_message(ticker)
-    elif parts[0].lower() == '/newhigh':
-        return get_new_highs()
-    elif parts[0].lower() == '/goldencross':
-        return format_tickers_as_text(results=find_golden_cross_tickers(), fields=["ticker", "price", "sma20", "sma50"], dollar_fields=["price", "sma20", "sma50"] )
-    elif parts[0].lower() == '/deathcross':
-        return format_tickers_as_text(results=find_death_cross_tickers(), fields=["ticker", "price", "sma20", "sma50"], dollar_fields=["price", "sma20", "sma50"] )
-    elif parts[0].lower() == '/ma_health':
-        return ma_health_alert()
-    return None
+    try:
+        print(len(parts))
+        if parts[0].lower() == '/summary' and len(parts) == 2:
+            ticker = parts[1].upper()
+            return generate_summary_message(ticker)
+        elif parts[0].lower() == '/newhigh':
+            return get_new_highs()
+        elif parts[0].lower() == '/goldencross':
+            return format_tickers_as_text(results=find_golden_cross_tickers(), fields=["ticker", "price", "sma20", "sma50"], dollar_fields=["price", "sma20", "sma50"] )
+        elif parts[0].lower() == '/deathcross':
+            return format_tickers_as_text(results=find_death_cross_tickers(), fields=["ticker", "price", "sma20", "sma50"], dollar_fields=["price", "sma20", "sma50"] )
+        elif parts[0].lower() == '/ma_health':
+            return ma_health_alert()
+        elif parts[0].lower() == '/long' and len(parts) == 2:
+            ticker = parts[1].upper()
+            return trade(ticker, side="long")
+        elif parts[0].lower() == '/short' and len(parts) == 2:
+            ticker = parts[1].upper()
+            return trade(ticker, side="short")
+    except Exception as e:
+        logging.info(f"error handling command {e}")
+        return None
 
 
 def analyze_new_highs():
@@ -641,3 +651,49 @@ def ma_health_alert():
         
     return format_market_breadth_telegram_message(stats)
     
+def trade(ticker, rr_ratio=2, side="long"):
+    if not ticker:
+        return "ticker is missing"
+    
+    df = read_tickers_df(ticker)
+    
+    if df.empty:
+        return 'data not found'
+    
+    df["ATR"] = abs(df["High"] - df["Low"]).rolling(14).mean()
+    
+    latest = df.iloc[-1]
+    close_price = latest["Close"]
+    atr = latest["ATR"]
+    
+    sl_value = 1.5  * atr
+    if side == "long":
+        sl_by_atr = close_price - sl_value
+        sl_by_pct = close_price * (1 - 8 / 100)
+        stop_loss = max(sl_by_atr, sl_by_pct)
+
+        take_profit = close_price + (close_price - stop_loss) * rr_ratio
+
+        sl_pct = abs((close_price - stop_loss) / close_price) * 100
+        tp_pct = abs((take_profit - close_price) / close_price) * 100
+
+    elif side == "short":
+        sl_by_atr = close_price + sl_value
+        sl_by_pct = close_price * (1 + 8 / 100)
+        stop_loss = min(sl_by_atr, sl_by_pct)
+
+        take_profit = close_price - (stop_loss - close_price) * rr_ratio
+
+        sl_pct = abs((stop_loss - close_price) / close_price) * 100
+        tp_pct = abs((close_price - take_profit) / close_price) * 100
+    
+    msg = []
+    msg.append(f"📊 Trading Plan for {ticker}\n")
+    msg.append(f"Entry: ${round(close_price,2)} ({side})")
+    msg.append(f"Take Profit: ${round(take_profit,2)} ({round(tp_pct,2)}%)")
+    msg.append(f"Stop Loss: ${round(stop_loss,2)} ({round(sl_pct,2)}%)")
+    msg.append(f"ATR: {round(atr,2)}")
+    msg.append(f"Reward:Risk: {rr_ratio}")
+
+    msg.append("\n📘 Please refer to trading view chart")
+    return "\n".join(msg)
