@@ -225,35 +225,53 @@ def find_golden_cross_tickers(ticker_list=None):
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             #df["SMA200"] = df["Close"].rolling(window=200).mean()
             
-            sma_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
-            latest = df.iloc[-1]
+            sma20_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
             
-            if sma_slope <= 0:
+            if sma20_slope <= 0:
                 continue  # skip if not sloping up
            
             # Find crossover (SMA20 > SMA50) within last 3 bars
-            signal_found = False
             for i in range(-3, 0):
-                if df["SMA20"].iloc[i - 1] < df["SMA50"].iloc[i - 1] and df["SMA20"].iloc[i] > df["SMA50"].iloc[i]:
-                    signal_found = True
-                    signal_date = df["Date"].iloc[i]
-                    break
+                prev_sma20 = df["SMA20"].iloc[i - 1]
+                prev_sma50 = df["SMA50"].iloc[i - 1]
+                curr_sma20 = df["SMA20"].iloc[i]
+                curr_sma50 = df["SMA50"].iloc[i]
+                close = df["Close"].iloc[-1]
+                low = df["Low"].iloc[-1]
+                signal_date = df["Date"].iloc[i]
+                
+                # Check crossover
+                if prev_sma20 < prev_sma50 and curr_sma20 > curr_sma50:
+                    # ✅ Reject if candle low is below SMA20
+                    if low < curr_sma20:
+                        continue  # skip weak setup
+                    
+                    # Distance from SMA20
+                    distance_pct = abs(close - curr_sma20) / curr_sma20 * 100
 
-            if not signal_found:
-                continue
-
-            latest = df.iloc[-1]
-            
-            if latest["Close"] > latest["SMA20"]:
-                goldencross.append({
-                    "ticker": ticker,
-                    "price": float(round(latest['Close'], 2)),
-                    "sma20": float(round(latest['SMA20'], 2)),
-                    "sma50": float(round(latest['SMA50'], 2)),
-                    "signal": "golden_cross",
-                    "signal_date": signal_date
-                })
-            
+                    # ✅ Reject if overextended
+                    if distance_pct > 1 and distance_pct < 2:
+                        entry_quality = "good"
+                    elif distance_pct > 5:
+                        entry_quality = "moderate"
+                    else:
+                        entry_quality = "weak"
+                    
+                    if distance_pct > 6:
+                        continue
+                    
+                    goldencross.append({
+                        "ticker": ticker,
+                        "signal": "golden_cross",
+                        "signal_date": signal_date,
+                        "price": round(close, 2),
+                        "sma20": round(curr_sma20, 2),
+                        "sma50": round(curr_sma50, 2),
+                        "sma20_slope": round(sma20_slope, 2),
+                        "ma_distance_pct": round(distance_pct, 2),
+                        "entry_quality": entry_quality
+                    })
+              
         except Exception as e:
             print(f"Error with {ticker}: {e}")
             continue
@@ -279,39 +297,58 @@ def find_death_cross_tickers(ticker_list=None):
             df["SMA50"] = df["Close"].rolling(window=50).mean()
             #df["SMA200"] = df["Close"].rolling(window=200).mean()
             
-            sma_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
-            if sma_slope >= 0:
+            sma20_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
+            if sma20_slope >= 0:
                 continue  # skip if not sloping up
 
             latest = df.iloc[-1]
             
              # Find crossover (SMA20 > SMA50) within last 3 bars
-            signal_found = False
+            fast_col="SMA20"
+            slow_col="SMA50"
             for i in range(-3, 0):
-                if df["SMA20"].iloc[i - 1] > df["SMA50"].iloc[i - 1] and df["SMA20"].iloc[i] < df["SMA50"].iloc[i]:
-                    signal_found = True
-                    signal_date = df["Date"].iloc[i]
-                    break
-
-            if not signal_found:
-                continue
-
-            latest = df.iloc[-1]
-            
-            if latest["Close"] > latest["SMA20"]:
-                death_cross.append({
-                    "ticker": ticker,
-                    "price": float(round(latest['Close'], 2)),
-                    "sma20": float(round(latest['SMA20'], 2)),
-                    "sma50": float(round(latest['SMA50'], 2)),
-                    "signal": "death_cross",
-                    "signal_date": signal_date
-                })
+                prev_fast = df[fast_col].iloc[i - 1]
+                prev_slow = df[slow_col].iloc[i - 1]
+                curr_fast = df[fast_col].iloc[i]
+                curr_slow = df[slow_col].iloc[i]
+                curr_sma20 = df["SMA20"].iloc[i]
+                close = df["Close"].iloc[i]
+                signal_date = df["Date"].iloc[i]   
+                distance_pct = abs(close - curr_sma20) / curr_sma20 * 100
+                
+                candle_high = df["High"].iloc[-1]
+                if candle_high >= curr_sma20:
+                    continue  # Reject this signal
+                
+                if distance_pct > 6:
+                    continue
+                
+                if prev_fast > prev_slow and curr_fast < curr_slow:
+                    # Determine entry quality
+                    if distance_pct > 1 and distance_pct < 2:
+                        quality = "good"
+                    elif distance_pct <= 3:
+                        quality = "moderate"
+                    else:
+                        quality = "weak"
+                    
+                    death_cross.append({
+                        "ticker": ticker,
+                        "price": round(close, 2),
+                        "sma20": round(latest['SMA20'], 2),
+                        "sma50": round(latest['SMA50'], 2),
+                        "sma20_slope": round(sma20_slope, 2),
+                        "ma_distance_pct": round(distance_pct, 2),
+                        "entry_quality": quality,
+                        "signal": "death_cross",
+                        "signal_date": signal_date
+                    })
+                
         except Exception as e:
             print(f"Error with {ticker}: {e}")
             continue
 
-    death_cross = sorted(death_cross, key=lambda x: x["price"], reverse=True)
+    death_cross = sorted(death_cross, key=lambda x: x["ma_distance_pct"])
     return death_cross[:50]
     
 def format_tickers_as_text(results, fields, include_header=True, dollar_fields=None):
