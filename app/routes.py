@@ -2,6 +2,7 @@ from flask import Blueprint, request
 from .bot import handle_command, analyze_new_highs,find_golden_cross_tickers, find_death_cross_tickers,scan_divergence_bulk,ma_health_alert
 from app.utils.telegram_utils import send_telegram_alert
 from .signals.update_tickers import download_and_save_tickers
+from .strategy.short_bias import find_strong_short_signals, find_strong_long_signals
 import logging
 
 webhook = Blueprint('webhook', __name__)
@@ -46,6 +47,17 @@ def alert_ma_health():
     send_telegram_alert(message=reply, chat_id=request.args.get("chat-id"))
     return {"status":"ok"},200
 
+@screener.route("/short-signals", methods=["GET"])
+def find_short_signals():
+    data = find_strong_short_signals()
+    return {"status":"ok", "data":data},200
+
+@screener.route("/long-signals", methods=["GET"])
+def find_long_signals():
+    data = find_strong_long_signals()
+    return {"status":"ok", "data":data},200
+
+#cloud scheduler run every day 6am except weekend
 @screener.route("/update-tickers", methods=["GET"])
 def update_ticker_scheduler():
     return download_and_save_tickers()

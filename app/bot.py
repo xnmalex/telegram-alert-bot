@@ -226,6 +226,7 @@ def find_golden_cross_tickers(ticker_list=None):
             #df["SMA200"] = df["Close"].rolling(window=200).mean()
             
             sma20_slope = df["SMA20"].iloc[-1] - df["SMA20"].iloc[-6]
+            close = df["Close"].iloc[-1]
             
             if sma20_slope <= 0:
                 continue  # skip if not sloping up
@@ -236,7 +237,7 @@ def find_golden_cross_tickers(ticker_list=None):
                 prev_sma50 = df["SMA50"].iloc[i - 1]
                 curr_sma20 = df["SMA20"].iloc[i]
                 curr_sma50 = df["SMA50"].iloc[i]
-                close = df["Close"].iloc[-1]
+               
                 low = df["Low"].iloc[-1]
                 signal_date = df["Date"].iloc[i]
                 
@@ -302,6 +303,7 @@ def find_death_cross_tickers(ticker_list=None):
                 continue  # skip if not sloping up
 
             latest = df.iloc[-1]
+            close = df["Close"].iloc[-1]
             
              # Find crossover (SMA20 > SMA50) within last 3 bars
             fast_col="SMA20"
@@ -312,7 +314,7 @@ def find_death_cross_tickers(ticker_list=None):
                 curr_fast = df[fast_col].iloc[i]
                 curr_slow = df[slow_col].iloc[i]
                 curr_sma20 = df["SMA20"].iloc[i]
-                close = df["Close"].iloc[i]
+               
                 signal_date = df["Date"].iloc[i]   
                 distance_pct = abs(close - curr_sma20) / curr_sma20 * 100
                 
